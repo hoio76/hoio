@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Pages 图床管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#2563eb',
+                        danger: '#dc2626',
+                        success: '#16a34a',
+                        dark: '#1f2937'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .drop-area {
+            border: 2px dashed #94a3b8;
+            transition: all 0.2s;
+        }
+        .drop-area.active {
+            border-color: #2563eb;
+            background-color: #eff6ff;
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen p-4 md:p-6">
+    <div class="max-w-7xl mx-auto">
+        <h1 class="text-[clamp(1.5rem,3vw,2.2rem)] font-bold mb-6 text-dark">
+            <i class="fa fa-cloud-upload mr-2"></i>GitHub Pages 图床管理器
+        </h1>
+
+        <!-- Token 设置区域 -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6">
+            <h2 class="text-lg font-semibold mb-3">Token 设置</h2>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <input id="tokenInput" type="password" placeholder="输入 GitHub Personal Access Token (repo权限)"
+                    class="flex-1 border border-gray-300 rounded px-3 py-2 outline-primary">
+                <button id="saveTokenBtn" class="bg-primary text-white px-4 py-2 rounded hover:bg-blue-700">
+                    <i class="fa fa-save mr-1"></i>保存Token
+                </button>
+                <button id="clearTokenBtn" class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">
+                    <i class="fa fa-trash-o mr-1"></i>清空
+                </button>
+            </div>
+            <p class="text-sm text-gray-500 mt-2">Token保存在浏览器本地localStorage，不会上传到第三方服务器</p >
+        </div>
+
+        <!-- 上传区域 -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6">
+            <h2 class="text-lg font-semibold mb-3">文件上传</h2>
+            <div id="dropArea" class="drop-area rounded-lg p-8 text-center cursor-pointer">
+                <i class="fa fa-file-o text-4xl text-gray-400 mb-2"></i>
+                <p class="text-gray-600">点击选择文件 或者 将文件拖拽到此区域，支持多选</p >
+                <p class="text-sm text-gray-500 mt-1">图片：jpg/png/gif/webp/svg/bmp/ico | 音频：mp3/wav/m4a/ogg/flac/aac</p >
+                <input type="file" id="fileInput" multiple class="hidden" accept="image/jpg,image/jpeg,image/png,image/gif,image/webp,image/svg+xml,image/bmp,image/x-icon,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/flac,audio/aac">
+            </div>
+            <div id="uploadProgressBox" class="mt-4 hidden">
+                <div class="flex items-center justify-between mb-1">
+                    <span id="uploadStatus">上传中...</span>
+                    <span id="uploadPercent">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="progressBar" class="bg-primary h-2.5 rounded-full" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图库区域 -->
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold">文件列表</h2>
+                <button id="refreshListBtn" class="bg-primary text-white px-3 py-1.5 rounded hover:bg-blue-700">
+                    <i class="fa fa-refresh mr-1"></i>刷新列表
+                </button>
+            </div>
+            <div id="galleryGrid" class="card-grid"></div>
+            <div id="emptyTip" class="py-10 text-center text-gray-400">暂无文件，上传后会展示在这里</div>
+        </div>
+    </div>
+
+    <script>
+        // 配置常量
+        const CONFIG = {
+            owner: "Hoio76",
+            repo: "Hoio",
+            branch: "main",
+            apiBase: "https://api.github.com"
+        };
+
+        // localStorage token
+        const STORAGE_KEY = "gh_picbed_token";
+        let token = localStorage.getItem(STORAGE_KEY) || "";
+        document.getElementById("tokenInput").value = token;
+
+        // DOM元素
+        const tokenInput = document.getElementById("tokenInput");
+        const saveTokenBtn = document.getElementById("saveTokenBtn");
+        const clearTokenBtn = document.getElementById("clearTokenBtn");
+        const dropArea = document.getElementById("dropArea");
+        const fileInput = document.getElementById("fileInput");
+        const uploadProgressBox = document.getElementById("uploadProgressBox");
+        const uploadStatus = document.getElementById("uploadStatus");
+        const uploadPercent = document.getElementById("uploadPercent");
+        const progressBar = document.getElementById("progressBar");
+        const galleryGrid = document.getElementById("galleryGrid");
+        const emptyTip = document.getElementById("emptyTip");
+        const refreshListBtn = document.getElementById("refreshListBtn");
+
+        // 保存token
+        saveTokenBtn.onclick = () => {
+            const val = tokenInput.value.trim();
+            localStorage.setItem(STORAGE_KEY, val);
+            token = val;
+            alert("Token已保存！");
+        };
+        clearTokenBtn.onclick = () => {
+            localStorage.removeItem(STORAGE_KEY);
+            tokenInput.value = "";
+            token = "";
+            alert("Token已清空");
+        };
+
+        // 拖拽上传
+        dropArea.onclick = () => fileInput.click();
+        dropArea.ondragover = (e) => { e.preventDefault(); dropArea.classList.add("active"); };
+        dropArea.ondragleave = () => dropArea.classList.remove("active");
+        dropArea.ondrop = (e) => {
+            e.preventDefault();
+            dropArea.classList.remove("active");
+            handleFiles(e.dataTransfer.files);
+        };
+        fileInput.onchange = () => handleFiles(fileInput.files);
+
+        // 文件处理入口
+        async function handleFiles(files) {
+            if (!token) { alert("请先设置并保存GitHub Token！"); return; }
+            if (!files.length) return;
+            uploadProgressBox.classList.remove("hidden");
+            const total = files.length;
+            let done = 0;
+
+            for (const file of files) {
+                try {
+                    uploadStatus.textContent = `正在上传：${file.name}`;
+                    await uploadFile(file);
+                    done++;
+                    const pct = Math.round((done / total) * 100);
+                    uploadPercent.textContent = `${pct}%`;
+                    progressBar.style.width = pct + "%";
+                } catch (err) {
+                    uploadStatus.textContent = `失败: ${file.name} - ${err.message}`;
+                    console.error(err);
+                }
+            }
+            uploadStatus.textContent = "全部上传完成，正在刷新列表...";
+            await fetchFileList();
+            setTimeout(()=>{
+                uploadProgressBox.classList.add("hidden");
+                progressBar.style.width = "0%";
+            },1200)
+        }
+
+        // 上传单个文件 PUT api
+        async function uploadFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    const b64 = reader.result.split(",")[1];
+                    const fileName = file.name;
+                    const url = `${CONFIG.apiBase}/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${fileName}`;
+                    try {
+                        const resp = await fetch(url, {
+                            method: "PUT",
+                            headers: {
+                                "Authorization": `token ${token}`,
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                message: `upload ${fileName}`,
+                                content: b64,
+                                branch: CONFIG.branch
+                            })
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok) throw new Error(data.message || "上传失败");
+                        resolve(data);
+                    }catch(e){ reject(e); }
+                };
+                reader.onerror = ()=>reject(new Error("读取文件失败"));
+                reader.readAsDataURL(file);
+            })
+        }
+
+        // 获取仓库文件列表
+        async function fetchFileList() {
+            if (!token) { alert("请先设置Token"); return; }
+            galleryGrid.innerHTML = "";
+            emptyTip.classList.remove("hidden");
+            const url = `${CONFIG.apiBase}/repos/${CONFIG.owner}/${CONFIG.repo}/contents?ref=${CONFIG.branch}`;
+            try {
+                const resp = await fetch(url, {
+                    headers: { Authorization: `token ${token}` }
+                });
+                const list = await resp.json();
+                if (!resp.ok) throw new Error(list.message || "获取列表失败");
+                if (!Array.isArray(list)) return;
+                emptyTip.classList.add("hidden");
+                list.forEach(item => {
+                    if(item.type !== "file") return;
+                    renderCard(item);
+                })
+            }catch(err){
+                alert("读取仓库文件失败：" + err.message);
+                console.error(err);
+            }
+        }
+
+        // 渲染卡片
+        function renderCard(fileItem) {
+            const { name, sha } = fileItem;
+            const cdnUrl = `https://${CONFIG.owner}.github.io/${CONFIG.repo}/${name}`;
+            const ext = name.split(".").pop().toLowerCase();
+            const imgExt = ["jpg","jpeg","png","gif","webp","svg","bmp","ico"];
+            const audioExt = ["mp3","wav","m4a","ogg","flac","aac"];
+
+            let previewHtml = "";
+            if(imgExt.includes(ext)){
+                previewHtml = `< img src="${cdnUrl}" class="w-full h-40 object-contain bg-gray-200 rounded" loading="lazy">`;
+            }else if(audioExt.includes(ext)){
+                previewHtml = `<div class="p-2 bg-gray-100 rounded"><audio controls class="w-full"><source src="${cdnUrl}">不支持播放</div>`;
+            }else{
+                previewHtml = `<div class="h-40 flex items-center justify-center bg-gray-100 rounded text-gray-500"><i class="fa fa-file-text-o text-3xl"></i></div>`;
+            }
+
+            const card = document.createElement("div");
+            card.className = "border rounded-lg overflow-hidden shadow-sm bg-gray-50";
+            card.innerHTML = `
+                ${previewHtml}
+                <div class="p-3">
+                    <p class="truncate font-medium text-sm" title="${name}">${name}</p >
+                    <input value="${cdnUrl}" class="w-full mt-2 text-xs border rounded px-1 py-1" readonly>
+                    <div class="flex gap-1 mt-2">
+                        <button class="copyBtn flex-1 bg-primary text-white rounded py-1 text-xs"><i class="fa fa-copy"></i>复制</button>
+                        <button class="openBtn flex-1 bg-gray-600 text-white rounded py-1 text-xs"><i class="fa fa-external-link"></i>打开</button>
+                        <button class="delBtn flex-1 bg-danger text-white rounded py-1 text-xs"><i class="fa fa-trash"></i>删除</button>
+                    </div>
+                </div>
+            `;
+            galleryGrid.appendChild(card);
+
+            // 复制链接
+            card.querySelector(".copyBtn").onclick = async () => {
+                await navigator.clipboard.writeText(cdnUrl);
+                alert("链接已复制");
+            };
+            // 打开
+            card.querySelector(".openBtn").onclick = () => window.open(cdnUrl, "_blank");
+            // 删除
+            card.querySelector(".delBtn").onclick = async () => {
+                if(!confirm(`确认删除文件：${name}？`)) return;
+                try{
+                    await deleteFile(name, sha);
+                    alert("删除成功");
+                    fetchFileList();
+                }catch(err){
+                    alert("删除失败："+err.message);
+                }
+            }
+        }
+
+        // 删除文件 DELETE API
+        async function deleteFile(filename, sha) {
+            const url = `${CONFIG.apiBase}/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${filename}`;
+            const resp = await fetch(url, {
+                method: "DELETE",
+                headers: {
+                    "Authorization": `token ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    message: `delete ${filename}`,
+                    sha: sha,
+                    branch: CONFIG.branch
+                })
+            });
+            const data = await resp.json();
+            if(!resp.ok) throw new Error(data.message || "删除请求失败");
+            return data;
+        }
+
+        // 刷新按钮
+        refreshListBtn.onclick = fetchFileList;
+
+        // 页面加载自动读取列表
+        window.onload = ()=>{
+            if(token) fetchFileList();
+        }
+    </script>
+</body>
+</html>
